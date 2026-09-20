@@ -56,5 +56,10 @@
     "joblib": "1.6.0",
     "mlflow": "3.16.1",
     "xgboost": "3.4.1"
+  },
+  "pipeline_training_run_id": "1d4b29416d0e4694b3ad5a6094d77b11",
+  "promotion_source": {
+    "github_training_run_id": "35509063287",
+    "github_training_commit": "362677361893178c90837e3bb0a7596cb254378b"
   }
 }
