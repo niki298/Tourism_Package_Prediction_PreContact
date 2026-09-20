@@ -25,6 +25,7 @@ def load_assets():
 
 pipeline, config = load_assets()
 
+st.image(str(BASE_DIR / "visitwithus.png"), width=220)
 st.title("Visit With Us")
 st.subheader("Pre-Contact Tourism Package Targeting")
 
