@@ -2,6 +2,17 @@ name: Pre-Contact Tourism Pipeline
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "tourism_precontact/data/**"
+      - "tourism_precontact/data_register.py"
+      - "tourism_precontact/data_prep.py"
+      - "tourism_precontact/model_train.py"
+      - "tourism_precontact/requirements-training.txt"
+      - "tourism_precontact/deployment/model_config.json"
+      - ".github/workflows/pipeline.yml"
 
 permissions:
   contents: read
