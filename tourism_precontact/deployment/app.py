@@ -105,7 +105,7 @@ with st.form("customer_details"):
         "the current campaign."
     )
 
-    submitted = st.form_submit_button("Assess targeting priority")
+    submitted = st.form_submit_button("Predict")
 
 if submitted:
     errors = []
@@ -174,15 +174,14 @@ if submitted:
 
         st.metric("Model purchase score", f"{score:.3f}")
 
-        if flagged:
-            st.success("Flagged for targeting")
+                if flagged:
+            st.success("Prediction: Likely to purchase")
         else:
-            st.info("Not flagged at the selected threshold")
+            st.info("Prediction: Not likely to purchase")
 
         st.caption(
-            f"Targeting threshold: {threshold:.2f}. "
-            "The score is a model estimate, not a guaranteed outcome "
-            "or a calibrated purchase probability."
+            "This prediction uses the model's selected decision threshold "
+            "and is an estimate, not a guaranteed outcome."
         )
 
 st.caption(
