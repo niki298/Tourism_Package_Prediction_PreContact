@@ -172,9 +172,7 @@ if submitted:
         threshold = float(config["classification_threshold"])
         flagged = score >= threshold
 
-        st.metric("Model purchase score", f"{score:.3f}")
-
-                if flagged:
+        if flagged:
             st.success("Prediction: Likely to purchase")
         else:
             st.info("Prediction: Not likely to purchase")
