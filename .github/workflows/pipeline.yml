@@ -1,0 +1,118 @@
+name: Pre-Contact Tourism Pipeline
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  register-dataset:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: tourism_precontact/requirements-training.txt
+
+      - name: Install dependencies
+        run: python -m pip install -r tourism_precontact/requirements-training.txt
+
+      - name: Validate source dataset
+        run: python tourism_precontact/data_register.py
+
+      - name: Preserve validated dataset and report
+        uses: actions/upload-artifact@v7
+        with:
+          name: registered-data
+          path: |
+            tourism_precontact/data/tourism.csv
+            tourism_precontact/reports/data_validation.json
+          if-no-files-found: error
+          retention-days: 30
+
+  data-prep:
+    needs: register-dataset
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: tourism_precontact/requirements-training.txt
+
+      - name: Install dependencies
+        run: python -m pip install -r tourism_precontact/requirements-training.txt
+
+      - name: Download validated dataset and report
+        uses: actions/download-artifact@v8
+        with:
+          name: registered-data
+          path: tourism_precontact
+
+      - name: Prepare group-aware training and test split
+        run: python tourism_precontact/data_prep.py
+
+      - name: Preserve prepared datasets and split metadata
+        uses: actions/upload-artifact@v7
+        with:
+          name: data-splits
+          path: tourism_precontact/data/processed/
+          if-no-files-found: error
+          retention-days: 30
+
+  model-training:
+    needs: data-prep
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: tourism_precontact/requirements-training.txt
+
+      - name: Install dependencies
+        run: python -m pip install -r tourism_precontact/requirements-training.txt
+
+      - name: Download prepared datasets
+        uses: actions/download-artifact@v8
+        with:
+          name: data-splits
+          path: tourism_precontact/data/processed
+
+      - name: Train fixed model and record evaluation
+        run: python tourism_precontact/model_train.py
+
+      - name: Preserve candidate model and experiment records
+        uses: actions/upload-artifact@v7
+        with:
+          name: training-results
+          path: tourism_precontact/pipeline_outputs/
+          if-no-files-found: error
+          retention-days: 30
+
