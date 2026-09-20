@@ -1,0 +1,206 @@
+name: Promote Pre-Contact Model
+
+on:
+  workflow_dispatch:
+    inputs:
+      training_run_id:
+        description: "Successful training run ID reviewed for promotion"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: precontact-model-promotion
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Verify source training run
+        uses: actions/github-script@v8
+        env:
+          TRAINING_RUN_ID: ${{ inputs.training_run_id }}
+        with:
+          script: |
+            const { execFileSync } = require("node:child_process");
+
+            const expectedRepo =
+              "niki298/Tourism_Package_Prediction_PreContact";
+
+            if (`${context.repo.owner}/${context.repo.repo}` !== expectedRepo) {
+              throw new Error("Unexpected repository.");
+            }
+
+            const runId = process.env.TRAINING_RUN_ID;
+            if (!/^\d+$/.test(runId)) {
+              throw new Error("Enter a numeric training run ID.");
+            }
+
+            const { data: run } = await github.rest.actions.getWorkflowRun({
+              ...context.repo,
+              run_id: Number(runId)
+            });
+
+            if (
+              run.status !== "completed" ||
+              run.conclusion !== "success" ||
+              run.head_branch !== "main" ||
+              run.path !== ".github/workflows/pipeline.yml" ||
+              run.head_repository?.full_name !== expectedRepo ||
+              !["push", "workflow_dispatch"].includes(run.event)
+            ) {
+              throw new Error("Source is not an eligible successful training run.");
+            }
+
+            execFileSync("git", [
+              "merge-base", "--is-ancestor", run.head_sha, "HEAD"
+            ]);
+
+            const changed = execFileSync("git", [
+              "diff", "--name-only", run.head_sha, "HEAD", "--",
+              "tourism_precontact/",
+              ".github/workflows/pipeline.yml"
+            ], { encoding: "utf8" }).trim();
+
+            if (changed) {
+              throw new Error(
+                "Project files changed after training. Review and run " +
+                "the training pipeline again before promotion:\n" + changed
+              );
+            }
+
+            core.info(`Verified training run ${runId}`);
+            core.exportVariable("SOURCE_TRAINING_SHA", run.head_sha);
+
+      - name: Download reviewed training results
+        uses: actions/download-artifact@v8
+        with:
+          name: training-results
+          run-id: ${{ inputs.training_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: ${{ runner.temp }}/reviewed-training-results
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: tourism_precontact/requirements-training.txt
+
+      - name: Install dependencies
+        run: python -m pip install -r tourism_precontact/requirements-training.txt
+
+      - name: Verify candidate and prepare deployment files
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/reviewed-training-results
+          TRAINING_RUN_ID: ${{ inputs.training_run_id }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import shutil
+          from pathlib import Path
+
+          import joblib
+          import numpy as np
+          import pandas as pd
+
+          project = Path("tourism_precontact")
+          deployment = project / "deployment"
+          artifact = Path(os.environ["ARTIFACT_DIR"])
+          candidate = artifact / "candidate"
+
+          current = json.loads(
+              (deployment / "model_config.json").read_text()
+          )
+          config = json.loads(
+              (candidate / "model_config.json").read_text()
+          )
+          report = json.loads(
+              (artifact / "evaluation.json").read_text()
+          )
+
+          # This workflow promotes the already-selected configuration.
+          # It does not select new settings or thresholds.
+          for key in [
+              "model_type",
+              "model_file",
+              "feature_columns",
+              "positive_class",
+              "classification_threshold",
+              "model_parameters",
+              "package_versions",
+          ]:
+              if config[key] != current[key]:
+                  raise ValueError(f"Candidate configuration differs: {key}")
+
+          filename = config["model_file"]
+          if filename != "tourism_precontact_pipeline.joblib":
+              raise ValueError("Unexpected model filename.")
+
+          if report["threshold"] != config["classification_threshold"]:
+              raise ValueError("Evaluation threshold does not match.")
+
+          model = joblib.load(candidate / filename)
+
+          sample = pd.read_csv(project / "data" / "tourism.csv").head(20)
+          sample["Gender"] = sample["Gender"].replace({"Fe Male": "Female"})
+          sample = sample[config["feature_columns"]]
+
+          probabilities = model.predict_proba(sample)
+
+          if probabilities.shape != (len(sample), 2):
+              raise ValueError("Unexpected prediction shape.")
+          if not np.isfinite(probabilities).all():
+              raise ValueError("Non-finite prediction values.")
+          if not ((probabilities >= 0) & (probabilities <= 1)).all():
+              raise ValueError("Probabilities outside [0, 1].")
+          if not np.allclose(probabilities.sum(axis=1), 1):
+              raise ValueError("Class probabilities do not sum to one.")
+          if list(model.named_steps["model"].classes_) != [0, 1]:
+              raise ValueError("Unexpected target classes.")
+
+          config["promotion_source"] = {
+              "github_training_run_id": os.environ["TRAINING_RUN_ID"],
+              "github_training_commit": os.environ["SOURCE_TRAINING_SHA"],
+          }
+
+          shutil.copy2(candidate / filename, deployment / filename)
+          (deployment / "model_config.json").write_text(
+              json.dumps(config, indent=2), encoding="utf-8"
+          )
+
+          print("Candidate configuration and prediction checks passed.")
+          print("Prepared model and configuration for promotion.")
+          PY
+
+      - name: Commit and push model update
+        env:
+          TRAINING_RUN_ID: ${{ inputs.training_run_id }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add \
+            tourism_precontact/deployment/tourism_precontact_pipeline.joblib \
+            tourism_precontact/deployment/model_config.json
+
+          if git diff --cached --quiet; then
+            echo "No deployment changes to commit."
+          else
+            git commit -m "Promote pre-contact model from run ${TRAINING_RUN_ID}"
+            git push origin HEAD:main
+          fi
